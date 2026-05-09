@@ -18,7 +18,7 @@ st.title("🔬 Deteksi Jumlah Sperma dari Gambar Mikroskop")
 st.write(
     "Aplikasi ini memakai algoritma adaptif agar bisa menangani banyak kemungkinan sample. "
     "Satu sperma dihitung jika terdeteksi kepala/badan dan indikasi ekor."
-    "Deteksi mungkin belum tepat jika menggunakan sample yang salah, karena identifikasi masih menggunakan bentuk (untuk menghemat GPU server), akan lebih akurat jika telah memanfaatkan machine learning."
+    " Deteksi mungkin belum tepat jika menggunakan sample yang salah, karena identifikasi masih menggunakan bentuk (untuk menghemat GPU server), akan lebih akurat jika telah memanfaatkan machine learning."
 )
 
 with st.expander("📌 Kriteria gambar yang baik agar hasil lebih presisi", expanded=True):
