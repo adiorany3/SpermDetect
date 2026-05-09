@@ -4,8 +4,15 @@ import math
 
 
 def _odd(value):
-    value = int(value)
+    value = int(round(value))
+    if value < 3:
+        value = 3
     return value if value % 2 == 1 else value + 1
+
+
+def _safe_percentile(image, p):
+    values = image.reshape(-1)
+    return float(np.percentile(values, p))
 
 
 def _line_kernel(length, angle_degree):
@@ -34,149 +41,192 @@ def _skeletonize(binary):
     element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
     image = binary.copy()
 
+    max_iter = 300
+    iteration = 0
+
     while True:
         eroded = cv2.erode(image, element)
         opened = cv2.dilate(eroded, element)
         temp = cv2.subtract(image, opened)
         skeleton = cv2.bitwise_or(skeleton, temp)
         image = eroded.copy()
+        iteration += 1
 
-        if cv2.countNonZero(image) == 0:
+        if cv2.countNonZero(image) == 0 or iteration > max_iter:
             break
 
     return skeleton
 
 
+def _remove_border(binary, border_ratio=0.01):
+    h, w = binary.shape[:2]
+    border = max(2, int(min(h, w) * border_ratio))
+    cleaned = binary.copy()
+    cleaned[:border, :] = 0
+    cleaned[-border:, :] = 0
+    cleaned[:, :border] = 0
+    cleaned[:, -border:] = 0
+    return cleaned
+
+
 def _preprocess(image_rgb):
     gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
 
+    # Koreksi background tidak rata.
+    h, w = gray.shape[:2]
+    bg_kernel = _odd(max(31, min(h, w) * 0.18))
+    background = cv2.medianBlur(gray, bg_kernel)
+    corrected = cv2.addWeighted(gray, 1.45, background, -0.45, 15)
+
+    # CLAHE untuk memperjelas detail kepala dan ekor.
     clahe = cv2.createCLAHE(
-        clipLimit=2.4,
+        clipLimit=2.2,
         tileGridSize=(8, 8)
     )
+    enhanced = clahe.apply(corrected)
+    enhanced = cv2.GaussianBlur(enhanced, (3, 3), 0)
 
-    enhanced_gray = clahe.apply(gray)
-    enhanced_gray = cv2.GaussianBlur(enhanced_gray, (3, 3), 0)
-
-    return gray, enhanced_gray
+    return gray, enhanced
 
 
 def _enhance_head_blackhat(enhanced_gray):
     h, w = enhanced_gray.shape[:2]
 
-    # Kernel otomatis mengikuti ukuran gambar.
-    kernel_size = _odd(max(9, min(h, w) * 0.075))
-
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (kernel_size, kernel_size)
-    )
-
-    blackhat = cv2.morphologyEx(
-        enhanced_gray,
-        cv2.MORPH_BLACKHAT,
-        kernel
-    )
-
-    blackhat = cv2.normalize(
-        blackhat,
-        None,
-        0,
-        255,
-        cv2.NORM_MINMAX
-    ).astype(np.uint8)
-
-    # Dibuat lebih terlihat.
-    blackhat = cv2.convertScaleAbs(
-        blackhat,
-        alpha=1.8,
-        beta=0
-    )
-
-    blackhat = cv2.GaussianBlur(blackhat, (3, 3), 0)
-
-    return blackhat
-
-
-def _enhance_tail_blackhat(enhanced_gray):
-    h, w = enhanced_gray.shape[:2]
-
-    # Kernel garis dibuat lebih panjang agar ekor tipis lebih muncul.
-    line_length = _odd(max(17, min(h, w) * 0.13))
+    # Beberapa ukuran kernel agar tahan terhadap variasi pembesaran.
+    base = min(h, w)
+    kernel_sizes = [
+        _odd(max(7, base * 0.045)),
+        _odd(max(11, base * 0.070)),
+        _odd(max(15, base * 0.095)),
+    ]
 
     response = np.zeros_like(enhanced_gray)
 
-    for angle in range(0, 180, 15):
-        kernel = _line_kernel(line_length, angle)
-        blackhat = cv2.morphologyEx(
-            enhanced_gray,
-            cv2.MORPH_BLACKHAT,
-            kernel
+    for size in kernel_sizes:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (size, size)
         )
+        blackhat = cv2.morphologyEx(enhanced_gray, cv2.MORPH_BLACKHAT, kernel)
         response = np.maximum(response, blackhat)
 
-    response = cv2.normalize(
-        response,
-        None,
-        0,
-        255,
-        cv2.NORM_MINMAX
-    ).astype(np.uint8)
-
-    response = cv2.convertScaleAbs(
-        response,
-        alpha=2.0,
-        beta=0
-    )
-
+    response = cv2.normalize(response, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    response = cv2.convertScaleAbs(response, alpha=1.9, beta=0)
     response = cv2.GaussianBlur(response, (3, 3), 0)
 
     return response
 
 
+def _enhance_tail_blackhat(enhanced_gray):
+    h, w = enhanced_gray.shape[:2]
+    base = min(h, w)
+
+    # Multi-length dan multi-angle untuk ekor yang melengkung/beda arah.
+    lengths = [
+        _odd(max(15, base * 0.09)),
+        _odd(max(21, base * 0.14)),
+        _odd(max(27, base * 0.19)),
+    ]
+
+    response = np.zeros_like(enhanced_gray)
+
+    for length in lengths:
+        for angle in range(0, 180, 15):
+            kernel = _line_kernel(length, angle)
+            blackhat = cv2.morphologyEx(enhanced_gray, cv2.MORPH_BLACKHAT, kernel)
+            response = np.maximum(response, blackhat)
+
+    response = cv2.normalize(response, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    response = cv2.convertScaleAbs(response, alpha=2.1, beta=0)
+    response = cv2.GaussianBlur(response, (3, 3), 0)
+
+    return response
+
+
+def _auto_threshold(image, percentile, minimum):
+    value = max(minimum, _safe_percentile(image, percentile))
+    _, binary = cv2.threshold(image, value, 255, cv2.THRESH_BINARY)
+    return binary
+
+
 def _make_head_binary(head_blackhat):
-    threshold_value = max(20, np.percentile(head_blackhat, 89))
+    # Gabungan threshold adaptif + percentile agar lebih robust.
+    p_bin = _auto_threshold(head_blackhat, 88, 18)
 
-    binary = (head_blackhat >= threshold_value).astype(np.uint8) * 255
-
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (3, 3)
+    adaptive = cv2.adaptiveThreshold(
+        head_blackhat,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        _odd(max(15, min(head_blackhat.shape[:2]) * 0.09)),
+        -2
     )
 
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+    binary = cv2.bitwise_and(p_bin, adaptive)
+
+    kernel3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel3, iterations=1)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel5, iterations=1)
+    binary = _remove_border(binary)
 
     return binary
 
 
 def _make_tail_binary(tail_blackhat):
-    threshold_value = max(14, np.percentile(tail_blackhat, 83))
+    p_bin = _auto_threshold(tail_blackhat, 81, 11)
 
-    binary = (tail_blackhat >= threshold_value).astype(np.uint8) * 255
-
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (2, 2)
+    adaptive = cv2.adaptiveThreshold(
+        tail_blackhat,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        _odd(max(17, min(tail_blackhat.shape[:2]) * 0.11)),
+        -3
     )
 
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    binary = cv2.bitwise_or(p_bin, adaptive)
+
+    kernel2 = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel2, iterations=1)
+    binary = _remove_border(binary)
 
     return binary
+
+
+def _component_shape_score(w, h, area):
+    bbox_area = max(1, w * h)
+    extent = area / bbox_area
+    aspect = max(w / max(h, 1), h / max(w, 1))
+
+    # Kepala/badan sperma biasanya oval, bukan garis sangat panjang.
+    score = 1.0
+
+    if aspect > 4.0:
+        score *= 0.25
+    elif aspect > 3.0:
+        score *= 0.55
+
+    if extent < 0.15:
+        score *= 0.60
+    elif extent > 0.95:
+        score *= 0.75
+
+    return score
 
 
 def _extract_head_candidates(gray, head_blackhat, head_binary):
     image_h, image_w = gray.shape[:2]
     image_area = image_h * image_w
+    base = min(image_h, image_w)
 
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-        head_binary
-    )
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(head_binary)
 
     candidates = []
 
-    min_area = max(10, image_area * 0.00018)
-    max_area = max(80, image_area * 0.008)
+    min_area = max(6, image_area * 0.00009)
+    max_area = max(70, image_area * 0.012)
 
     for label_id in range(1, num_labels):
         x, y, w, h, area = stats[label_id]
@@ -184,19 +234,18 @@ def _extract_head_candidates(gray, head_blackhat, head_binary):
         if area < min_area or area > max_area:
             continue
 
-        if w < 4 or h < 4:
+        if w < 3 or h < 3:
             continue
 
-        if w > image_w * 0.25 or h > image_h * 0.25:
+        if w > image_w * 0.28 or h > image_h * 0.28:
             continue
 
-        aspect_ratio = max(w / max(h, 1), h / max(w, 1))
-
-        if aspect_ratio > 3.8:
+        shape_score = _component_shape_score(w, h, area)
+        if shape_score < 0.30:
             continue
 
         cx, cy = centroids[label_id]
-        radius = int(max(w, h) / 2) + 2
+        radius = int(max(w, h) / 2) + max(2, int(base * 0.006))
 
         roi = gray[
             max(0, int(cy - radius)):min(image_h, int(cy + radius + 1)),
@@ -208,7 +257,16 @@ def _extract_head_candidates(gray, head_blackhat, head_binary):
 
         dark_score = 255 - float(np.mean(roi))
         blackhat_score = float(np.mean(head_blackhat[labels == label_id]))
-        score = blackhat_score + dark_score * 0.15 + area * 0.04
+
+        # Penalti noise yang terlalu kecil/terlalu putih.
+        if blackhat_score < 8 and dark_score < 35:
+            continue
+
+        score = (
+            blackhat_score * 1.00 +
+            dark_score * 0.16 +
+            math.sqrt(area) * 1.35
+        ) * shape_score
 
         candidates.append(
             {
@@ -221,7 +279,6 @@ def _extract_head_candidates(gray, head_blackhat, head_binary):
             }
         )
 
-    # Hilangkan kandidat ganda yang terlalu dekat.
     candidates = sorted(candidates, key=lambda item: item["score"], reverse=True)
     merged = []
 
@@ -229,15 +286,8 @@ def _extract_head_candidates(gray, head_blackhat, head_binary):
         is_duplicate = False
 
         for saved in merged:
-            distance = math.hypot(
-                candidate["x"] - saved["x"],
-                candidate["y"] - saved["y"]
-            )
-
-            min_distance = max(
-                7,
-                0.55 * (candidate["r"] + saved["r"])
-            )
+            distance = math.hypot(candidate["x"] - saved["x"], candidate["y"] - saved["y"])
+            min_distance = max(5, 0.58 * (candidate["r"] + saved["r"]))
 
             if distance < min_distance:
                 is_duplicate = True
@@ -249,50 +299,65 @@ def _extract_head_candidates(gray, head_blackhat, head_binary):
     return merged
 
 
+def _tail_statistics_for_candidate(candidate, tail_skeleton, image_shape):
+    image_h, image_w = image_shape[:2]
+    cx = candidate["x"]
+    cy = candidate["y"]
+    radius = candidate["r"]
+
+    base = min(image_h, image_w)
+    max_tail_distance = max(22, int(base * 0.33))
+    min_tail_distance = max(radius + 1, int(base * 0.012))
+
+    x1 = max(0, int(cx - max_tail_distance))
+    x2 = min(image_w, int(cx + max_tail_distance + 1))
+    y1 = max(0, int(cy - max_tail_distance))
+    y2 = min(image_h, int(cy + max_tail_distance + 1))
+
+    local = tail_skeleton[y1:y2, x1:x2]
+
+    if local.size == 0:
+        return 0, 0, 0
+
+    ys, xs = np.where(local > 0)
+
+    if len(xs) == 0:
+        return 0, 0, 0
+
+    xs = xs + x1
+    ys = ys + y1
+
+    distances = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+
+    valid = (distances > min_tail_distance) & (distances < max_tail_distance)
+    near = (distances > radius) & (distances < radius + max(9, int(base * 0.035)))
+
+    tail_pixels = int(np.sum(valid))
+    near_head_pixels = int(np.sum(near))
+    max_reach = float(np.max(distances[valid])) if tail_pixels > 0 else 0.0
+
+    return tail_pixels, near_head_pixels, max_reach
+
+
 def _validate_head_tail_pair(candidates, tail_skeleton, image_shape):
     image_h, image_w = image_shape[:2]
+    base = min(image_h, image_w)
 
-    yy, xx = np.mgrid[0:image_h, 0:image_w]
-
-    dilated_skeleton = cv2.dilate(
-        tail_skeleton,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    )
-
-    max_tail_distance = max(25, int(min(image_h, image_w) * 0.28))
-    min_tail_pixels = max(4, int(min(image_h, image_w) * 0.025))
+    min_tail_pixels = max(3, int(base * 0.018))
+    min_tail_reach = max(10, int(base * 0.045))
 
     detections = []
 
     for candidate in candidates:
-        cx = candidate["x"]
-        cy = candidate["y"]
-        radius = candidate["r"]
-
-        distance_map = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-
-        # Ekor harus berada di luar kepala/badan, tetapi masih di sekitar objek.
-        tail_zone = (
-            (distance_map > radius + 1) &
-            (distance_map < max_tail_distance)
-        ).astype(np.uint8) * 255
-
-        # Harus ada ekor yang dekat dengan kepala/badan.
-        near_head_zone = (
-            (distance_map > radius) &
-            (distance_map < radius + 11)
-        ).astype(np.uint8) * 255
-
-        tail_pixels = cv2.countNonZero(
-            cv2.bitwise_and(tail_skeleton, tail_zone)
-        )
-
-        near_head_pixels = cv2.countNonZero(
-            cv2.bitwise_and(dilated_skeleton, near_head_zone)
+        tail_pixels, near_head_pixels, max_reach = _tail_statistics_for_candidate(
+            candidate,
+            tail_skeleton,
+            image_shape
         )
 
         valid_tail = (
             tail_pixels >= min_tail_pixels and
+            max_reach >= min_tail_reach and
             near_head_pixels >= 1
         )
 
@@ -300,33 +365,25 @@ def _validate_head_tail_pair(candidates, tail_skeleton, image_shape):
             item = dict(candidate)
             item["tail_pixels"] = int(tail_pixels)
             item["near_head_pixels"] = int(near_head_pixels)
+            item["tail_reach"] = round(float(max_reach), 1)
             detections.append(item)
 
-    # Jika gambar sangat buram dan koneksi ekor ke kepala putus,
-    # fallback tetap mewajibkan adanya banyak piksel ekor di sekitar kepala.
-    if len(detections) < max(3, len(candidates) * 0.35):
+    # Fallback untuk gambar buram: koneksi ekor sering putus, jadi near_head dibuat lebih longgar.
+    if len(detections) < max(2, int(len(candidates) * 0.30)):
         detections = []
 
         for candidate in candidates:
-            cx = candidate["x"]
-            cy = candidate["y"]
-            radius = candidate["r"]
-
-            distance_map = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-
-            tail_zone = (
-                (distance_map > radius) &
-                (distance_map < max_tail_distance)
-            ).astype(np.uint8) * 255
-
-            tail_pixels = cv2.countNonZero(
-                cv2.bitwise_and(tail_skeleton, tail_zone)
+            tail_pixels, near_head_pixels, max_reach = _tail_statistics_for_candidate(
+                candidate,
+                tail_skeleton,
+                image_shape
             )
 
-            if tail_pixels >= min_tail_pixels:
+            if tail_pixels >= max(2, min_tail_pixels - 1) and max_reach >= min_tail_reach:
                 item = dict(candidate)
                 item["tail_pixels"] = int(tail_pixels)
-                item["near_head_pixels"] = 0
+                item["near_head_pixels"] = int(near_head_pixels)
+                item["tail_reach"] = round(float(max_reach), 1)
                 detections.append(item)
 
     detections = sorted(detections, key=lambda item: (item["y"], item["x"]))
@@ -344,6 +401,13 @@ def count_sperm(image_rgb):
     tail_binary = _make_tail_binary(tail_blackhat)
     tail_skeleton = _skeletonize(tail_binary)
 
+    # Dilasi tipis agar ekor putus-putus masih terbaca sebagai indikasi ekor.
+    tail_skeleton_for_validation = cv2.dilate(
+        tail_skeleton,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1
+    )
+
     candidates = _extract_head_candidates(
         gray=gray,
         head_blackhat=head_blackhat,
@@ -352,7 +416,7 @@ def count_sperm(image_rgb):
 
     detections = _validate_head_tail_pair(
         candidates=candidates,
-        tail_skeleton=tail_skeleton,
+        tail_skeleton=tail_skeleton_for_validation,
         image_shape=gray.shape
     )
 
@@ -365,23 +429,26 @@ def count_sperm(image_rgb):
                 "X": int(round(item["x"])),
                 "Y": int(round(item["y"])),
                 "Radius Kepala/Badan": int(item["r"]),
+                "Area Kepala/Badan": int(item["area"]),
                 "Piksel Ekor": int(item.get("tail_pixels", 0)),
+                "Jangkauan Ekor": item.get("tail_reach", 0),
                 "Score": round(float(item["score"]), 2)
             }
         )
 
     debug = {
         "Gray": gray,
+        "Enhanced": enhanced_gray,
         "Black-hat Kepala/Badan": head_blackhat,
         "Binary Kepala/Badan": head_binary,
         "Black-hat Ekor": tail_blackhat,
-        "Binary Ekor": tail_binary,
         "Skeleton Ekor": tail_skeleton
     }
 
     return {
         "count": len(detections),
         "detections": detections,
+        "candidates": candidates,
         "table": table,
         "debug": debug
     }
@@ -401,7 +468,7 @@ def draw_detection(image_rgb, detections):
         cv2.putText(
             output,
             str(index),
-            (x - 7, y + 5),
+            (x - 8, y + 5),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
             (255, 0, 0),
@@ -415,7 +482,6 @@ def draw_detection(image_rgb, detections):
 def _to_rgb(image):
     if len(image.shape) == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-
     return image
 
 
@@ -423,37 +489,70 @@ def make_debug_grid(debug):
     names = list(debug.keys())
     images = [_to_rgb(debug[name]) for name in names]
 
-    resized = []
-
     target_w = 360
     target_h = 240
+    rendered = []
 
     for name, image in zip(names, images):
         image = cv2.resize(image, (target_w, target_h))
         canvas = image.copy()
 
-        cv2.rectangle(
-            canvas,
-            (0, 0),
-            (target_w, 28),
-            (255, 255, 255),
-            -1
-        )
-
+        cv2.rectangle(canvas, (0, 0), (target_w, 30), (255, 255, 255), -1)
         cv2.putText(
             canvas,
             name,
-            (8, 20),
+            (8, 21),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
             (0, 0, 0),
             1,
             cv2.LINE_AA
         )
+        rendered.append(canvas)
 
-        resized.append(canvas)
-
-    row1 = np.hstack(resized[:3])
-    row2 = np.hstack(resized[3:6])
+    row1 = np.hstack(rendered[:3])
+    row2 = np.hstack(rendered[3:6])
 
     return np.vstack([row1, row2])
+
+
+def image_quality_report(image_rgb):
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape[:2]
+
+    blur_value = cv2.Laplacian(gray, cv2.CV_64F).var()
+    contrast_value = gray.std()
+    brightness_value = gray.mean()
+    min_side = min(h, w)
+
+    report = []
+
+    if min_side >= 300:
+        report.append({"status": "baik", "message": f"Resolusi cukup baik: {w} x {h} px."})
+    elif min_side >= 200:
+        report.append({"status": "cukup", "message": f"Resolusi cukup, tetapi lebih baik minimal 300 px pada sisi terpendek. Saat ini: {w} x {h} px."})
+    else:
+        report.append({"status": "kurang", "message": f"Resolusi terlalu kecil: {w} x {h} px. Detail ekor bisa hilang."})
+
+    if blur_value >= 120:
+        report.append({"status": "baik", "message": f"Fokus gambar baik. Nilai ketajaman: {blur_value:.1f}."})
+    elif blur_value >= 55:
+        report.append({"status": "cukup", "message": f"Fokus cukup, tetapi masih bisa lebih tajam. Nilai ketajaman: {blur_value:.1f}."})
+    else:
+        report.append({"status": "kurang", "message": f"Gambar cenderung blur. Nilai ketajaman: {blur_value:.1f}. Ekor sperma bisa tidak terbaca."})
+
+    if contrast_value >= 38:
+        report.append({"status": "baik", "message": f"Kontras gambar baik. Nilai kontras: {contrast_value:.1f}."})
+    elif contrast_value >= 22:
+        report.append({"status": "cukup", "message": f"Kontras cukup. Nilai kontras: {contrast_value:.1f}. Hasil bisa membaik jika objek lebih kontras dari background."})
+    else:
+        report.append({"status": "kurang", "message": f"Kontras rendah. Nilai kontras: {contrast_value:.1f}. Kepala/ekor sulit dipisahkan dari background."})
+
+    if 60 <= brightness_value <= 205:
+        report.append({"status": "baik", "message": f"Pencahayaan berada pada rentang baik. Brightness: {brightness_value:.1f}."})
+    elif 40 <= brightness_value < 60 or 205 < brightness_value <= 225:
+        report.append({"status": "cukup", "message": f"Pencahayaan cukup, tetapi belum ideal. Brightness: {brightness_value:.1f}."})
+    else:
+        report.append({"status": "kurang", "message": f"Pencahayaan kurang ideal. Brightness: {brightness_value:.1f}. Hindari gambar terlalu gelap/terlalu terang."})
+
+    return report

@@ -1,7 +1,7 @@
 import argparse
 import cv2
 
-from detector import count_sperm, draw_detection
+from detector import count_sperm, draw_detection, image_quality_report
 
 
 def main():
@@ -37,6 +37,14 @@ def main():
 
     print(f"Jumlah sperma terdeteksi: {result['count']}")
     print(f"Hasil gambar disimpan ke: {args.output}")
+    print()
+    print("Analisis kualitas gambar:")
+
+    for item in image_quality_report(rgb):
+        print(f"- [{item['status'].upper()}] {item['message']}")
+
+    print()
+    print("Created by Galuh Adi Insani")
 
 
 if __name__ == "__main__":
