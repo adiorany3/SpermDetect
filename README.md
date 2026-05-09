@@ -1,67 +1,42 @@
-# Deteksi Jumlah Sperma dari Gambar Mikroskop
+# Deteksi Sperma Mikroskop - Black-hat + Kepala/Badan + Ekor
 
-Aplikasi Python + Streamlit untuk menghitung jumlah sperma dari gambar mikroskop.
+Aplikasi ini menghitung jumlah sperma dari gambar mikroskop.
 
-Algoritma utama:
-1. Konversi gambar ke grayscale.
-2. Peningkatan kontras dengan CLAHE.
-3. Black-hat morphology untuk menonjolkan kepala sperma yang gelap/oval.
-4. Thresholding.
-5. Connected component analysis.
-6. Filter ukuran dan bentuk agar ekor sperma tidak ikut dihitung.
+Prinsip deteksi:
 
-> Catatan: aplikasi ini untuk pembelajaran/eksperimen computer vision, bukan alat diagnosis medis.
+1. **CLAHE** untuk memperkuat kontras gambar mikroskop.
+2. **Black-hat morphology** untuk membuat objek gelap lebih terlihat.
+3. Deteksi **kepala/badan** sebagai blob kecil gelap.
+4. Deteksi **ekor** sebagai garis tipis gelap, lalu dibuat skeleton.
+5. Satu objek dihitung sebagai sperma jika terdeteksi **kepala/badan + ekor di sekitar kepala**.
 
-## Struktur File
-
-```text
-deteksi_sperma_mikroskop/
-├── app.py
-├── detector.py
-├── count_cli.py
-├── requirements.txt
-├── README.md
-└── sample_sperm_16.jpeg
-```
-
-## Cara Menjalankan Streamlit
+## Cara menjalankan Streamlit
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Lalu upload gambar mikroskop.
+Upload gambar mikroskop, lalu gunakan preset **Sample 16 sperma** untuk gambar contoh.
 
-Untuk gambar contoh `sample_sperm_16.jpeg`, pilih preset:
-
-```text
-Sperm sample 16
-```
-
-Target hasil: **16 sperma**.
-
-## Cara Menjalankan dari Terminal
+## Cara menjalankan CLI
 
 ```bash
-python count_cli.py sample_sperm_16.jpeg --output hasil.jpg
+python count_cli.py sample_sperm_16.jpeg --output sample_sperm_16_result.jpg --show-debug
 ```
 
-## Tips Penyesuaian
+Output contoh:
 
-Jika hasil terlalu sedikit:
-- Turunkan `Area minimum`.
-- Turunkan `Lebar minimum` dan `Tinggi minimum`.
-- Turunkan `Kebulatan minimum`.
-- Gunakan threshold manual dengan nilai lebih rendah/tinggi sesuai gambar.
+```text
+Jumlah sperma terdeteksi: 16
+```
 
-Jika hasil terlalu banyak:
-- Naikkan `Area minimum`.
-- Naikkan `Lebar minimum` dan `Tinggi minimum`.
-- Naikkan `Kebulatan minimum`.
-- Naikkan `Jarak gabung deteksi ganda`.
+## Parameter penting
 
-Jika ekor sperma ikut terhitung:
-- Naikkan `Rasio lonjong maksimum` menjadi lebih kecil.
-- Naikkan `Lebar minimum` dan `Tinggi minimum`.
-- Naikkan `Kebulatan minimum`.
+- **Gain tampilan black-hat**: hanya untuk memperjelas tampilan black-hat di aplikasi.
+- **Kernel black-hat kepala**: makin kecil, lebih fokus ke kepala kecil; makin besar, lebih banyak bagian gelap ikut muncul.
+- **Kernel black-hat ekor**: lebih besar agar ekor/garis panjang ikut terlihat.
+- **Minimal piksel ekor**: memastikan satu deteksi memiliki ekor, bukan hanya titik kepala.
+- **Jarak gabung deteksi**: mengurangi duplikasi pada kepala yang sama.
+
+Catatan: gambar mikroskop bisa berbeda-beda kualitas, ukuran objek, dan pencahayaan. Karena itu beberapa parameter disediakan di sidebar agar mudah disesuaikan.

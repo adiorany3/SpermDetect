@@ -1,38 +1,29 @@
 import argparse
 import cv2
 
-from detector import detect_sperm_heads, draw_detections
+from detector import detect_sperm_complete, draw_detections
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hitung jumlah sperma dari gambar mikroskop.")
-    parser.add_argument("image_path", help="Path gambar input")
-    parser.add_argument("--output", default="hasil_deteksi_sperma.jpg", help="Path output gambar anotasi")
+    parser = argparse.ArgumentParser(description="Hitung sperma dari gambar mikroskop.")
+    parser.add_argument("image", help="Path gambar input")
+    parser.add_argument("--output", default="result.jpg", help="Path gambar hasil anotasi")
+    parser.add_argument("--show-debug", action="store_true", help="Simpan gambar debug black-hat dan skeleton")
     args = parser.parse_args()
 
-    image_bgr = cv2.imread(args.image_path)
+    image_bgr = cv2.imread(args.image)
     if image_bgr is None:
-        raise FileNotFoundError(f"Gambar tidak ditemukan: {args.image_path}")
+        raise SystemExit(f"Gambar tidak bisa dibaca: {args.image}")
 
-    detections, enhanced, binary, working_bgr, scale = detect_sperm_heads(
-        image_bgr,
-        blackhat_kernel=25,
-        clahe_clip=0.0,
-        blur_size=1,
-        morph_open=False,
-        min_area=15,
-        max_area=250,
-        min_width=5,
-        min_height=5,
-        max_width_obj=25,
-        max_height_obj=25,
-        max_aspect_ratio=3.0,
-        min_circularity=0.05,
-        merge_distance=8,
-    )
+    detections, debug = detect_sperm_complete(image_bgr)
+    result = draw_detections(debug["working_bgr"], detections)
+    cv2.imwrite(args.output, result)
 
-    output_bgr = draw_detections(working_bgr, detections)
-    cv2.imwrite(args.output, output_bgr)
+    if args.show_debug:
+        cv2.imwrite("debug_blackhat_head.png", debug["head_blackhat_visible"])
+        cv2.imwrite("debug_head_binary.png", debug["head_binary"])
+        cv2.imwrite("debug_tail_binary.png", debug["tail_binary"])
+        cv2.imwrite("debug_tail_skeleton.png", debug["tail_skeleton"])
 
     print(f"Jumlah sperma terdeteksi: {len(detections)}")
     print(f"Hasil anotasi disimpan ke: {args.output}")
