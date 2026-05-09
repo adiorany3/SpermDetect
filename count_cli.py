@@ -1,32 +1,42 @@
 import argparse
 import cv2
 
-from detector import detect_sperm_complete, draw_detections
+from detector import count_sperm, draw_detection
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hitung sperma dari gambar mikroskop.")
-    parser.add_argument("image", help="Path gambar input")
-    parser.add_argument("--output", default="result.jpg", help="Path gambar hasil anotasi")
-    parser.add_argument("--show-debug", action="store_true", help="Simpan gambar debug black-hat dan skeleton")
+    parser = argparse.ArgumentParser(
+        description="Hitung jumlah sperma dari gambar mikroskop."
+    )
+
+    parser.add_argument(
+        "image",
+        help="Path gambar input, misalnya sample_sperm_16.jpeg"
+    )
+
+    parser.add_argument(
+        "--output",
+        default="hasil_deteksi_sperma.jpg",
+        help="Path gambar output dengan anotasi."
+    )
+
     args = parser.parse_args()
 
-    image_bgr = cv2.imread(args.image)
-    if image_bgr is None:
-        raise SystemExit(f"Gambar tidak bisa dibaca: {args.image}")
+    bgr = cv2.imread(args.image)
 
-    detections, debug = detect_sperm_complete(image_bgr)
-    result = draw_detections(debug["working_bgr"], detections)
-    cv2.imwrite(args.output, result)
+    if bgr is None:
+        raise FileNotFoundError(f"Gambar tidak ditemukan: {args.image}")
 
-    if args.show_debug:
-        cv2.imwrite("debug_blackhat_head.png", debug["head_blackhat_visible"])
-        cv2.imwrite("debug_head_binary.png", debug["head_binary"])
-        cv2.imwrite("debug_tail_binary.png", debug["tail_binary"])
-        cv2.imwrite("debug_tail_skeleton.png", debug["tail_skeleton"])
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-    print(f"Jumlah sperma terdeteksi: {len(detections)}")
-    print(f"Hasil anotasi disimpan ke: {args.output}")
+    result = count_sperm(rgb)
+    output_rgb = draw_detection(rgb, result["detections"])
+    output_bgr = cv2.cvtColor(output_rgb, cv2.COLOR_RGB2BGR)
+
+    cv2.imwrite(args.output, output_bgr)
+
+    print(f"Jumlah sperma terdeteksi: {result['count']}")
+    print(f"Hasil gambar disimpan ke: {args.output}")
 
 
 if __name__ == "__main__":
