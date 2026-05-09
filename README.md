@@ -1,59 +1,67 @@
-# Deteksi Jumlah Sperma dari Citra Mikroskop
+# Deteksi Jumlah Sperma dari Gambar Mikroskop
 
-Aplikasi Streamlit sederhana untuk menghitung jumlah sperma dari gambar mikroskop menggunakan OpenCV.
+Aplikasi Python + Streamlit untuk menghitung jumlah sperma dari gambar mikroskop.
 
-## Catatan penting
+Algoritma utama:
+1. Konversi gambar ke grayscale.
+2. Peningkatan kontras dengan CLAHE.
+3. Black-hat morphology untuk menonjolkan kepala sperma yang gelap/oval.
+4. Thresholding.
+5. Connected component analysis.
+6. Filter ukuran dan bentuk agar ekor sperma tidak ikut dihitung.
 
-Aplikasi ini dibuat untuk pembelajaran/eksperimen computer vision, bukan untuk diagnosis medis. Hasil dapat berubah tergantung kualitas mikroskop, pencahayaan, fokus, pembesaran, dan pewarnaan sampel.
+> Catatan: aplikasi ini untuk pembelajaran/eksperimen computer vision, bukan alat diagnosis medis.
 
-## Cara kerja algoritma
+## Struktur File
 
-Objek yang dihitung adalah kepala sperma, karena kepala lebih stabil dideteksi daripada ekor yang tipis.
+```text
+deteksi_sperma_mikroskop/
+├── app.py
+├── detector.py
+├── count_cli.py
+├── requirements.txt
+├── README.md
+└── sample_sperm_16.jpeg
+```
 
-Tahapan utama:
-
-1. Convert gambar RGB ke grayscale.
-2. Peningkatan kontras lokal dengan CLAHE.
-3. Koreksi background agar pencahayaan mikroskop tidak terlalu memengaruhi hasil.
-4. Adaptive threshold untuk memisahkan objek kecil dari background.
-5. Morphology open/close untuk membersihkan noise.
-6. Watershed opsional untuk memisahkan kepala sperma yang menempel.
-7. Filter contour berdasarkan luas, circularity, aspect ratio, dan jarak minimum.
-8. Menampilkan jumlah, gambar hasil deteksi, dan data CSV.
-
-## Instalasi
+## Cara Menjalankan Streamlit
 
 ```bash
 pip install -r requirements.txt
-```
-
-## Menjalankan aplikasi
-
-```bash
 streamlit run app.py
 ```
 
-## Tips pengaturan
+Lalu upload gambar mikroskop.
 
-Jika hasil terlalu sedikit:
-
-- Turunkan `Luas minimum kepala sperma`
-- Turunkan `Circularity minimum`
-- Turunkan `Jarak minimum antar deteksi`
-- Coba ubah `Adaptive threshold C`
-- Aktifkan atau nonaktifkan `Invert`
-
-Jika hasil terlalu banyak/noise:
-
-- Naikkan `Luas minimum kepala sperma`
-- Naikkan `Circularity minimum`
-- Naikkan `Jarak minimum antar deteksi`
-- Naikkan `Luas maksimum` hanya jika objek kepala memang besar
-
-## Struktur file
+Untuk gambar contoh `sample_sperm_16.jpeg`, pilih preset:
 
 ```text
-app.py
-requirements.txt
-README.md
+Sperm sample 16
 ```
+
+Target hasil: **16 sperma**.
+
+## Cara Menjalankan dari Terminal
+
+```bash
+python count_cli.py sample_sperm_16.jpeg --output hasil.jpg
+```
+
+## Tips Penyesuaian
+
+Jika hasil terlalu sedikit:
+- Turunkan `Area minimum`.
+- Turunkan `Lebar minimum` dan `Tinggi minimum`.
+- Turunkan `Kebulatan minimum`.
+- Gunakan threshold manual dengan nilai lebih rendah/tinggi sesuai gambar.
+
+Jika hasil terlalu banyak:
+- Naikkan `Area minimum`.
+- Naikkan `Lebar minimum` dan `Tinggi minimum`.
+- Naikkan `Kebulatan minimum`.
+- Naikkan `Jarak gabung deteksi ganda`.
+
+Jika ekor sperma ikut terhitung:
+- Naikkan `Rasio lonjong maksimum` menjadi lebih kecil.
+- Naikkan `Lebar minimum` dan `Tinggi minimum`.
+- Naikkan `Kebulatan minimum`.
